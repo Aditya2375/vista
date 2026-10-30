@@ -1,8 +1,21 @@
 name: test
-on: [push, pull_request]
+on: [push]
 jobs:
   test:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - run: make check
+  sanitizers:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: unit tests under ASan and UBSan
+        run: |
+          mkdir -p build/tests
+          cc -std=gnu11 -O1 -g -Wall -Wextra -Werror -Isrc -fsanitize=address,undefined \
+            tests/test_vista.c src/surface.c src/widget.c src/keys.c src/run.c -o build/tests/test_vista_san
+          ./build/tests/test_vista_san
+          cc -std=gnu11 -O1 -g -Wall -Wextra -Werror -Isrc -fsanitize=address,undefined \
+            tests/test_round2.c src/surface.c src/widget.c src/keys.c src/run.c -o build/tests/test_round2_san
+          ./build/tests/test_round2_san

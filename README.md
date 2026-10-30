@@ -10,14 +10,19 @@ a whole form session for real.
 
 ```text
 Example settings
+
 Adi
+
 [ ] enable notifications
-+--------------------------------------------------+
-|small                                             |
-|medium                                            |
-|large                                             |
-+--------------------------------------------------+
-[ save ]                  [ quit ]
+
++------------------------------------------------+
+|small                                           |
+|medium                                          |
+|large                                           |
++------------------------------------------------+
+
+[ save ]                    [ quit ]
+
 saved settings for Adi
 ```
 
@@ -33,25 +38,36 @@ make
 ```c
 #include "vista.h"
 
-struct widget *root = vista_box(1, 1);              /* vertical, pad 1 */
-widget_add(root, vista_label("Example settings"));
-widget_add(root, vista_input("your name"));
-widget_add(root, vista_checkbox("enable notifications", 1));
-struct widget *list = vista_list();
-vista_list_add(list, "small");
-widget_add(root, list);
-widget_add(root, vista_button("save", on_save, &ui));
+static void on_save(struct widget *w, void *user) {
+    (void)w; (void)user;                            /* do the thing */
+}
 
-struct ui ui;
-ui_init(&ui, root, 50, 16);
-ui_run(&ui);                                        /* interactive */
+int main(void) {
+    struct widget *root = vista_box(1, 1);          /* vertical, pad 1 */
+    widget_add(root, vista_label("Example settings"));
+    widget_add(root, vista_input("your name"));
+    widget_add(root, vista_checkbox("enable notifications", 1));
+    struct widget *list = vista_list();
+    vista_list_add(list, "small");
+    widget_add(root, list);
+
+    struct ui ui;
+    widget_add(root, vista_button("save", on_save, &ui));
+    ui_init(&ui, root, 50, 16);
+    int rc = ui_run(&ui);                           /* interactive */
+    ui_free(&ui);
+    widget_free(root);
+    return rc;
+}
 ```
 
 - **Widgets** are plain structs with a kind and per-kind state; containers
   (`vista_box`) lay children out in rows or columns with padding.
 - **Focus** is a chain of the focusable widgets in tree order; `tab`
-  cycles, `enter`/`space` activates, inputs take printable keys, arrows,
-  and backspace, lists take up/down/enter.
+  and `shift-tab` cycle, `enter`/`space` activates. Inputs take printable
+  keys, arrows, home/end, delete, and backspace, and scroll horizontally
+  to keep the cursor visible. Lists take up/down/home/end/page keys and
+  scroll any number of items through their window.
 - **Rendering** is immediate-mode onto a cell grid; `surface_flush` diffs
   front and back buffers and emits only the changes.
 - **Headless mode**: `ui_run_headless(ui, events, n)` feeds a scripted
@@ -60,16 +76,22 @@ ui_run(&ui);                                        /* interactive */
 
 ## Tested / not tested
 
-Tested here: 21 unit checks (surface primitives and clipping, focus chain
-and tab wrap, button activation, checkbox toggling, input editing with
-mid-buffer insert/backspace, list navigation with clamping, vbox/hbox
-layout math) plus a golden dump of a scripted form session: type "Adi",
-uncheck notifications, move the list, press save, verify the status line.
+Tested here: 58 unit checks across two suites - surface primitives and
+clipping, the flush diff (no change, no bytes), focus chain and tab wrap,
+button activation, checkbox toggling, input editing (mid-buffer insert,
+backspace, delete, home/end, horizontal scrolling), list navigation with
+30 items scrolling through the window, hbox remainder distribution and
+zero-width clamping, escape-sequence sanitization in widget text, the
+terminal key decoder (lone Escape with a timeout, full CSI sequences,
+dangling sequences), and live resize - plus a golden dump of a scripted
+form session: type "Adi", uncheck notifications, move the list, press
+save, verify the status line. CI also runs the suite under ASan/UBSan.
 
 Not tested: interactive use on a real terminal by a human (event decode
 and rendering are verified headless and as text, not by eye on every
-terminal emulator), window resize, mouse input, and scrolling lists
-(16 items max, all visible).
+terminal emulator) and mouse input. The interactive runner restores the
+terminal on Ctrl-C/SIGTERM and re-lays out on SIGWINCH; both are wired
+through signal handlers but exercised manually, not in CI.
 
 ## Architecture and tests
 
