@@ -3,6 +3,18 @@
 #include <stdlib.h>
 #include <string.h>
 
+/* Control characters in widget text would let a label inject escape
+ * sequences into the terminal; show them as '?' instead. */
+static char *sanitize(const char *s) {
+    size_t n = strlen(s);
+    char *out = malloc(n + 1);
+    if (!out) { perror("malloc"); exit(1); }
+    for (size_t i = 0; i < n; i++)
+        out[i] = (unsigned char)s[i] < 32 || s[i] == 127 ? '?' : s[i];
+    out[n] = '\0';
+    return out;
+}
+
 static struct widget *widget_new(enum widget_kind kind) {
     struct widget *w = calloc(1, sizeof *w);
     if (!w) { perror("calloc"); exit(1); }
@@ -12,15 +24,14 @@ static struct widget *widget_new(enum widget_kind kind) {
 
 struct widget *vista_label(const char *text) {
     struct widget *w = widget_new(W_LABEL);
-    snprintf(w->text, sizeof w->text, "%s", text);
-    w->focusable = 0;
+    w->text = sanitize(text);
     w->h = 1;
     return w;
 }
 
 struct widget *vista_button(const char *text, widget_action_fn on_activate, void *user) {
     struct widget *w = widget_new(W_BUTTON);
-    snprintf(w->text, sizeof w->text, "%s", text);
+    w->text = sanitize(text);
     w->focusable = 1;
     w->on_activate = on_activate;
     w->user = user;
@@ -30,7 +41,7 @@ struct widget *vista_button(const char *text, widget_action_fn on_activate, void
 
 struct widget *vista_input(const char *placeholder) {
     struct widget *w = widget_new(W_INPUT);
-    snprintf(w->text, sizeof w->text, "%s", placeholder);
+    w->text = sanitize(placeholder);
     w->focusable = 1;
     w->h = 1;
     return w;
@@ -38,7 +49,7 @@ struct widget *vista_input(const char *placeholder) {
 
 struct widget *vista_checkbox(const char *text, int checked) {
     struct widget *w = widget_new(W_CHECKBOX);
-    snprintf(w->text, sizeof w->text, "%s", text);
+    w->text = sanitize(text);
     w->checked = checked;
     w->focusable = 1;
     w->h = 1;
@@ -56,14 +67,25 @@ struct widget *vista_box(int vertical, int pad) {
     struct widget *w = widget_new(W_BOX);
     w->vertical = vertical;
     w->pad = pad;
-    w->focusable = 0;
     return w;
 }
 
+/* Replace a label's text (takes a sanitized copy). */
+void vista_label_set(struct widget *w, const char *text) {
+    char *fresh = sanitize(text);
+    free(w->text);
+    w->text = fresh;
+}
+
 void vista_list_add(struct widget *list, const char *item) {
-    if (list->nitems >= 16) return;
-    snprintf(list->items[list->nitems++], 64, "%s", item);
-    if (list->h < list->nitems + 2) list->h = list->nitems + 2;  /* grow to fit */
+    if (list->nitems >= list->items_cap) {
+        list->items_cap = list->items_cap ? list->items_cap * 2 : 16;
+        list->items = realloc(list->items, (size_t)list->items_cap * sizeof *list->items);
+        if (!list->items) { perror("realloc"); exit(1); }
+    }
+    list->items[list->nitems++] = sanitize(item);
+    if (list->h < list->nitems + 2 && list->h < 12)
+        list->h = list->nitems + 2;   /* grow up to a sane window */
 }
 
 void widget_add(struct widget *parent, struct widget *child) {
@@ -79,17 +101,22 @@ void widget_add(struct widget *parent, struct widget *child) {
 void widget_free(struct widget *w) {
     if (!w) return;
     for (int i = 0; i < w->nchildren; i++) widget_free(w->children[i]);
+    for (int i = 0; i < w->nitems; i++) free(w->items[i]);
+    free(w->items);
     free(w->children);
+    free(w->text);
+    free(w->buf);
     free(w);
 }
 
 /* ---- layout: boxes split their rect among children ---- */
 static void widget_layout(struct widget *w, int x, int y, int width) {
+    if (width < 1) width = 1;
     w->x = x;
     w->y = y;
     if (w->kind == W_BOX) {
         int n = w->nchildren;
-        if (!n) return;
+        if (!n) { w->w = width; return; }
         int pad_total = w->pad * (n - 1);
         if (w->vertical) {
             int cy = y;
@@ -97,15 +124,19 @@ static void widget_layout(struct widget *w, int x, int y, int width) {
                 widget_layout(w->children[i], x, cy, width);
                 cy += w->children[i]->h + w->pad;
             }
-            w->h = cy - y - (n ? w->pad : 0);
-            (void)pad_total;
+            w->h = cy - y - w->pad;
         } else {
-            int cw = (width - pad_total) / n;
+            /* share what the padding leaves; the remainder goes to the
+             * first children, one column each, and nobody gets zero */
+            int avail = width - pad_total;
+            if (avail < n) avail = n;
+            int cw = avail / n, rem = avail % n;
             int cx = x;
             for (int i = 0; i < n; i++) {
-                w->children[i]->h = w->h ? w->h : 1;
-                widget_layout(w->children[i], cx, y, cw);
-                cx += cw + w->pad;
+                int mine = cw + (i < rem ? 1 : 0);
+                if (!w->children[i]->h) w->children[i]->h = 1;
+                widget_layout(w->children[i], cx, y, mine);
+                cx += mine + w->pad;
             }
         }
         w->w = width;
@@ -116,12 +147,10 @@ static void widget_layout(struct widget *w, int x, int y, int width) {
 }
 
 void ui_layout(struct ui *ui) {
-    if (ui->root->kind == W_BOX) {
-        if (ui->root->vertical) ui->root->h = ui->surface.h;
-        widget_layout(ui->root, 0, 0, ui->surface.w);
-    } else {
-        widget_layout(ui->root, 0, 0, ui->surface.w);
-    }
+    if (ui->root->kind == W_BOX && ui->root->vertical)
+        ui->root->h = ui->surface.h;
+    widget_layout(ui->root, 0, 0, ui->surface.w);
+    ui->needs_layout = 0;
 }
 
 /* ---- drawing ---- */
@@ -132,41 +161,71 @@ static void widget_draw(struct widget *w, struct surface *s) {
         surface_text(s, w->x, w->y, w->text, V_CYAN, bg);
         break;
     case W_BUTTON: {
-        char b[132];
-        snprintf(b, sizeof b, "[ %s ]", w->text);
+        size_t n = strlen(w->text) + 5;
+        char *b = malloc(n);
+        if (!b) { perror("malloc"); exit(1); }
+        snprintf(b, n, "[ %s ]", w->text);
         if (w->focused) { fg = V_BLACK; bg = V_CYAN; }
         surface_text(s, w->x, w->y, b, fg, bg);
+        free(b);
         break;
     }
     case W_INPUT: {
         if (w->focused) { fg = V_BLACK; bg = V_WHITE; }
-        char shown[128];
+        int width = w->w > 0 ? w->w : 20;
+        /* keep the cursor inside the visible window */
+        if (w->cursor < w->scroll) w->scroll = w->cursor;
+        if (w->cursor >= w->scroll + width) w->scroll = w->cursor - width + 1;
         const char *content = w->len ? w->buf : w->text;
-        snprintf(shown, sizeof shown, "%-*s", w->w > 0 && w->w < 120 ? w->w : 20,
-                 w->len ? w->buf : content);
-        surface_text(s, w->x, w->y, shown, w->len ? fg : V_DEFAULT, bg);
-        if (w->focused && w->cursor <= w->len)
-            surface_put(s, w->x + w->cursor, w->y, w->buf[w->cursor] ? w->buf[w->cursor] : ' ',
-                        V_BLACK, V_GREEN);
+        int clen = w->len ? w->len : (int)strlen(content);
+        for (int i = 0; i < width; i++) {
+            int idx = w->scroll + i;
+            char c = idx < clen ? content[idx] : ' ';
+            surface_put(s, w->x + i, w->y, c, w->len ? fg : V_DEFAULT, bg);
+        }
+        if (w->focused) {
+            int cx = w->cursor - w->scroll;
+            if (cx >= 0 && cx < width) {
+                int idx = w->cursor;
+                char c = idx < w->len ? w->buf[idx] : ' ';
+                surface_put(s, w->x + cx, w->y, c, V_BLACK, V_GREEN);
+            }
+        }
         break;
     }
     case W_CHECKBOX: {
-        char b[132];
-        snprintf(b, sizeof b, "[%c] %s", w->checked ? 'x' : ' ', w->text);
-        if (w->focused) { fg = V_YELLOW; }
+        size_t n = strlen(w->text) + 5;
+        char *b = malloc(n);
+        if (!b) { perror("malloc"); exit(1); }
+        snprintf(b, n, "[%c] %s", w->checked ? 'x' : ' ', w->text);
+        if (w->focused) fg = V_YELLOW;
         surface_text(s, w->x, w->y, b, fg, bg);
+        free(b);
         break;
     }
-    case W_LIST:
+    case W_LIST: {
         surface_box(s, w->x, w->y, w->w, w->h, w->focused ? V_CYAN : V_WHITE, bg);
-        for (int i = 0; i < w->nitems && i < w->h - 2; i++) {
+        int view = w->h - 2;
+        /* scroll so the selection is always visible */
+        if (w->selected < w->scroll) w->scroll = w->selected;
+        if (w->selected >= w->scroll + view) w->scroll = w->selected - view + 1;
+        for (int i = 0; i < view && w->scroll + i < w->nitems; i++) {
+            int idx = w->scroll + i;
             uint8_t ifg = V_WHITE, ibg = V_BLACK;
-            if (w->focused && i == w->selected) { ifg = V_BLACK; ibg = V_CYAN; }
-            char line[64];
-            snprintf(line, sizeof line, "%-*s", w->w - 2, w->items[i]);
-            surface_text(s, w->x + 1, w->y + 1 + i, line, ifg, ibg);
+            if (w->focused && idx == w->selected) { ifg = V_BLACK; ibg = V_CYAN; }
+            int inner = w->w - 2;
+            for (int c = 0; c < inner; c++) {
+                char ch = c < (int)strlen(w->items[idx]) ? w->items[idx][c] : ' ';
+                surface_put(s, w->x + 1 + c, w->y + 1 + i, ch, ifg, ibg);
+            }
+        }
+        /* scrollbar hint when items overflow the window */
+        if (w->nitems > view && view > 0) {
+            int thumb = w->y + 1 + w->scroll * view / w->nitems;
+            surface_put(s, w->x + w->w - 1, thumb, '#', V_CYAN, bg);
         }
         break;
+    }
     case W_BOX:
         for (int i = 0; i < w->nchildren; i++) widget_draw(w->children[i], s);
         break;
@@ -174,12 +233,14 @@ static void widget_draw(struct widget *w, struct surface *s) {
 }
 
 void ui_draw(struct ui *ui) {
+    if (ui->needs_layout) ui_layout(ui);
     surface_clear(&ui->surface, ' ', V_WHITE, V_BLACK);
     widget_draw(ui->root, &ui->surface);
 }
 
 /* ---- events ---- */
 static int widget_event(struct widget *w, const struct event *ev) {
+    if (ev->type != 'k') return 0;
     switch (w->kind) {
     case W_BUTTON:
         if (ev->key == VK_ENTER || ev->key == ' ') {
@@ -194,7 +255,12 @@ static int widget_event(struct widget *w, const struct event *ev) {
         }
         return 0;
     case W_INPUT:
-        if (ev->key >= 32 && ev->key < 127 && w->len < 120) {
+        if (ev->key >= 32 && ev->key < 127) {
+            if (w->len + 1 >= w->cap) {
+                w->cap = w->cap ? w->cap * 2 : 64;
+                w->buf = realloc(w->buf, (size_t)w->cap);
+                if (!w->buf) { perror("realloc"); exit(1); }
+            }
             memmove(w->buf + w->cursor + 1, w->buf + w->cursor, (size_t)(w->len - w->cursor + 1));
             w->buf[w->cursor++] = (char)ev->key;
             w->len++;
@@ -208,12 +274,31 @@ static int widget_event(struct widget *w, const struct event *ev) {
             }
             return 1;
         }
+        if (ev->key == VK_DEL && w->cursor < w->len) {
+            memmove(w->buf + w->cursor, w->buf + w->cursor + 1, (size_t)(w->len - w->cursor));
+            w->len--;
+            return 1;
+        }
         if (ev->key == VK_LEFT && w->cursor > 0) { w->cursor--; return 1; }
         if (ev->key == VK_RIGHT && w->cursor < w->len) { w->cursor++; return 1; }
+        if (ev->key == VK_HOME) { w->cursor = 0; return 1; }
+        if (ev->key == VK_END) { w->cursor = w->len; return 1; }
         return 0;
     case W_LIST:
         if (ev->key == VK_UP && w->selected > 0) { w->selected--; return 1; }
         if (ev->key == VK_DOWN && w->selected < w->nitems - 1) { w->selected++; return 1; }
+        if (ev->key == VK_PGUP && w->selected > 0) {
+            w->selected -= w->h - 2;
+            if (w->selected < 0) w->selected = 0;
+            return 1;
+        }
+        if (ev->key == VK_PGDN && w->selected < w->nitems - 1) {
+            w->selected += w->h - 2;
+            if (w->selected > w->nitems - 1) w->selected = w->nitems - 1;
+            return 1;
+        }
+        if (ev->key == VK_HOME) { w->selected = 0; return w->nitems > 0; }
+        if (ev->key == VK_END && w->nitems) { w->selected = w->nitems - 1; return 1; }
         if (ev->key == VK_ENTER && w->on_activate) { w->on_activate(w, w->user); return 1; }
         return 0;
     default:
@@ -254,9 +339,21 @@ void ui_free(struct ui *ui) {
     surface_free(&ui->surface);
 }
 
+void ui_resize(struct ui *ui, int w, int h) {
+    surface_free(&ui->surface);
+    surface_init(&ui->surface, w, h);
+    ui->needs_layout = 1;
+    ui_draw(ui);
+}
+
 int ui_event(struct ui *ui, const struct event *ev) {
+    if (ev->type != 'k') return 0;
     if (ev->key == VK_TAB) {
         focus_set(ui, ui->focus_idx + 1);
+        return 1;
+    }
+    if (ev->key == VK_BTAB) {
+        focus_set(ui, ui->focus_idx - 1);
         return 1;
     }
     if (ui->focus_idx >= 0)

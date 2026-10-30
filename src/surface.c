@@ -1,9 +1,14 @@
 #include "vista.h"
 
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
 void surface_init(struct surface *s, int w, int h) {
+    if (w <= 0 || h <= 0) {
+        fprintf(stderr, "vista: surface size %dx%d is not usable\n", w, h);
+        exit(1);
+    }
     s->w = w;
     s->h = h;
     s->front = calloc((size_t)w * h, sizeof *s->front);
@@ -71,7 +76,8 @@ long surface_flush(struct surface *s, FILE *out) {
             written += fprintf(out, "\033[%d;%dH%c", y + 1, x + 1, b->ch);
         }
     }
-    written += fprintf(out, "\033[0m");
+    if (written)    /* reset only when we actually set attributes */
+        written += fprintf(out, "\033[0m");
     return written;
 }
 
