@@ -14,8 +14,9 @@ static void on_save(struct widget *w, void *user) {
     for (int i = 0; i < ui->nfocus; i++)
         if (ui->focus_chain[i]->kind == W_INPUT && ui->focus_chain[i]->len)
             name = ui->focus_chain[i]->buf;
-    snprintf(status_label->text, sizeof status_label->text,
-             "saved settings for %.80s", name[0] ? name : "(no name)");
+    char msg[128];
+    snprintf(msg, sizeof msg, "saved settings for %.80s", name[0] ? name : "(no name)");
+    vista_label_set(status_label, msg);
 }
 
 static void on_quit(struct widget *w, void *user) {
