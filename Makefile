@@ -1,5 +1,6 @@
 CC      ?= cc
-CFLAGS  ?= -std=gnu11 -O2 -g -Wall -Wextra -Werror -Isrc
+CFLAGS  ?= -O2 -g
+CFLAGS  += -std=gnu11 -Wall -Wextra -Werror -Isrc
 
 all: build/libvista.a build/demo
 
