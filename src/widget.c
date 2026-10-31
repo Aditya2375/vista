@@ -256,27 +256,30 @@ static int widget_event(struct widget *w, const struct event *ev) {
         return 0;
     case W_INPUT:
         if (ev->key >= 32 && ev->key < 127) {
-            if (w->len + 1 >= w->cap) {
+            if (w->len + 2 > w->cap) {   /* content plus the terminator */
                 w->cap = w->cap ? w->cap * 2 : 64;
                 w->buf = realloc(w->buf, (size_t)w->cap);
                 if (!w->buf) { perror("realloc"); exit(1); }
             }
-            memmove(w->buf + w->cursor + 1, w->buf + w->cursor, (size_t)(w->len - w->cursor + 1));
+            memmove(w->buf + w->cursor + 1, w->buf + w->cursor, (size_t)(w->len - w->cursor));
             w->buf[w->cursor++] = (char)ev->key;
             w->len++;
+            w->buf[w->len] = '\0';
             return 1;
         }
         if (ev->key == 127 || ev->key == 8) {
             if (w->cursor > 0) {
-                memmove(w->buf + w->cursor - 1, w->buf + w->cursor, (size_t)(w->len - w->cursor + 1));
+                memmove(w->buf + w->cursor - 1, w->buf + w->cursor, (size_t)(w->len - w->cursor));
                 w->cursor--;
                 w->len--;
+                w->buf[w->len] = '\0';
             }
             return 1;
         }
         if (ev->key == VK_DEL && w->cursor < w->len) {
-            memmove(w->buf + w->cursor, w->buf + w->cursor + 1, (size_t)(w->len - w->cursor));
+            memmove(w->buf + w->cursor, w->buf + w->cursor + 1, (size_t)(w->len - w->cursor - 1));
             w->len--;
+            w->buf[w->len] = '\0';
             return 1;
         }
         if (ev->key == VK_LEFT && w->cursor > 0) { w->cursor--; return 1; }

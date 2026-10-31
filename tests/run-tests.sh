@@ -16,8 +16,13 @@ $TCC $TCFLAGS tests/test_round2.c build/libvista.a -o "$OUT/test_round2"
 "$OUT/test_round2"
 
 $TCC $TCFLAGS -Iexamples -DDEMO_NO_MAIN \
-    tests/dump_demo.c examples/demo.c build/libvista.a -o "$OUT/dump_demo"
+    tests/dump_demo.c examples/demo.c build/libvista.a $EXTRA -o "$OUT/dump_demo"
 "$OUT/dump_demo" > "$OUT/demo.txt"
 diff tests/demo.expected "$OUT/demo.txt"
 echo "GOLDEN DUMP PASSED"
+
+# live resize + quit-by-signal on a pty
+$TCC $TCFLAGS -Iexamples -DDEMO_NO_MAIN $EXTRA \
+    tests/signal_test.c examples/demo.c build/libvista.a -lutil -o "$OUT/signal_test"
+"$OUT/signal_test"
 echo "ALL TESTS PASSED"
