@@ -1,5 +1,7 @@
 # vista
 
+**[Try the demo form in your browser](https://aditya2375.github.io/vista/)** - the real widget tree, layout and event loop compiled to WebAssembly.
+
 A text-mode UI toolkit in C - in the Turbo Vision tradition, with no
 ncurses or other dependencies. A widget tree (labels, buttons, inputs,
 checkboxes, lists, layout boxes), a focus chain with tab navigation,

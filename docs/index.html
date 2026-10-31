@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>vista - a UI toolkit, live in your browser</title>
+<style>
+  :root { --bg: #0d1117; --panel: #161b22; --edge: #30363d; --fg: #7ee787; --dim: #8b949e; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg);
+         font: 14px/1.5 "SF Mono", ui-monospace, Menlo, Consolas, monospace; }
+  main { max-width: 960px; margin: 0 auto; padding: 24px 16px 48px; }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  h1 .star { color: var(--dim); font-weight: normal; }
+  p.sub { color: var(--dim); margin: 0 0 20px; }
+  a { color: #58a6ff; }
+  .panel { background: #000; border: 1px solid var(--edge); border-radius: 8px; padding: 12px; display: inline-block; }
+  canvas { display: block; }
+  .row { display: flex; gap: 8px; margin-bottom: 16px; flex-wrap: wrap; align-items: center; }
+  button { background: #21262d; color: var(--fg); border: 1px solid var(--edge);
+           border-radius: 6px; padding: 6px 14px; font: inherit; cursor: pointer; }
+  button:hover { border-color: var(--fg); }
+  button:disabled { opacity: .5; cursor: wait; }
+  #hint { color: var(--dim); margin-top: 12px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>vista <span class="star">- a text-mode UI toolkit</span></h1>
+  <p class="sub">The toolkit's own demo form running live: widget tree, layout, focus and
+     events compiled to WebAssembly. The native build renders to your terminal with ANSI;
+     here the same surface buffer is drawn to a canvas.
+     <a href="https://github.com/Aditya2375/vista">Source on GitHub</a>.</p>
+
+  <div class="row">
+    <button id="restart" disabled>loading toolkit...</button>
+  </div>
+
+  <div class="panel"><canvas id="screen" tabindex="0"></canvas></div>
+  <p id="hint">click the form, then: tab/shift-tab moves focus, type in the name field,
+    space toggles the checkbox, arrows move the list, enter activates a button.</p>
+</main>
+
+<script src="vista.js"></script>
+<script>
+const COLORS = ["#000000","#f85149","#7ee787","#e3b341","#58a6ff","#d2a8ff","#39c5cf","#c9d1d9","#8b949e"];
+const NAV = { ArrowUp:256, ArrowDown:257, ArrowLeft:258, ArrowRight:259,
+              Home:260, End:261, PageUp:262, PageDown:263, Delete:264 };
+const canvas = document.getElementById("screen");
+const ctx = canvas.getContext("2d");
+const btn = document.getElementById("restart");
+const CELL_W = 10, CELL_H = 18;
+ctx.font = '16px "SF Mono", ui-monospace, Menlo, Consolas, monospace';
+ctx.textBaseline = "top";
+
+let mod = null, ui = 0, w = 0, h = 0;
+
+function newForm() {
+  if (ui) mod.ccall("vista_free", null, ["number"], [ui]);
+  ui = mod.ccall("vista_new", "number", ["number","number"], [50, 16]);
+  w = mod.ccall("vista_w", "number", ["number"], [ui]);
+  h = mod.ccall("vista_h", "number", ["number"], [ui]);
+  canvas.width = w * CELL_W;
+  canvas.height = h * CELL_H;
+}
+
+function draw() {
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const c = mod.ccall("vista_cell", "number", ["number","number"], [ui, y * w + x]);
+      const ch = (c >> 16) & 0xff, fg = (c >> 8) & 0xff, bg = c & 0xff;
+      ctx.fillStyle = COLORS[bg] || "#000";
+      ctx.fillRect(x * CELL_W, y * CELL_H, CELL_W, CELL_H);
+      if (ch !== 32) {
+        ctx.fillStyle = COLORS[fg] || COLORS[8];
+        ctx.fillText(String.fromCharCode(ch), x * CELL_W + 1, y * CELL_H + 1);
+      }
+    }
+  }
+}
+
+VistaModule().then((m) => {
+  mod = m;
+  newForm();
+  draw();
+  btn.disabled = false;
+  btn.textContent = "reset form";
+});
+btn.onclick = () => { newForm(); draw(); };
+
+canvas.addEventListener("keydown", (e) => {
+  if (!mod) return;
+  let k = null;
+  if (e.key === "Tab") k = e.shiftKey ? 265 : 9;
+  else if (e.key === "Enter") k = 13;
+  else if (e.key === "Backspace") k = 8;
+  else if (NAV[e.key] !== undefined) k = NAV[e.key];
+  else if (e.key.length === 1) k = e.key.charCodeAt(0);
+  if (k !== null) {
+    const running = mod.ccall("vista_key", "number", ["number","number"], [ui, k]);
+    if (!running) { newForm(); }
+    draw();
+    e.preventDefault();
+  }
+});
+</script>
+</body>
+</html>
