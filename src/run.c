@@ -1,6 +1,7 @@
 #include "vista.h"
 #include "keys.h"
 
+#include <errno.h>
 #include <poll.h>
 #include <signal.h>
 #include <stdio.h>
@@ -27,23 +28,32 @@ static void term_restore(void) {
 static void on_winch(int sig) { (void)sig; got_winch = 1; }
 
 static void on_quit(int sig) {
-    /* restore the terminal, then re-raise so the exit status is honest */
-    term_restore();
-    signal(sig, SIG_DFL);
-    raise(sig);
+    /* async-signal-safe: only record the signal; the main loop restores
+       the terminal and re-raises so the exit status stays honest */
+    got_quit = sig;
 }
 
-/* Read one key, waiting at most timeout_ms when a sequence is pending. */
+/* Read one key. Waits in bounded poll slices so a signal that arrives
+   between the main loop's flag check and the read still wakes us: with
+   no SA_RESTART the poll fails with EINTR and the flags are re-checked. */
 static int read_key(struct keydec *kd) {
     for (;;) {
+        if (got_quit || got_winch) return VK_NONE;
+        struct pollfd pfd = { .fd = STDIN_FILENO, .events = POLLIN };
+        int pr = poll(&pfd, 1, 100);
+        if (pr < 0) {
+            if (errno == EINTR) continue;
+            return VK_NONE;
+        }
+        if (pr == 0) continue;   /* idle slice; loop re-checks flags */
         unsigned char c;
         ssize_t n = read(STDIN_FILENO, &c, 1);
         if (n <= 0) return VK_NONE;
         int k = keydec_feed(kd, c);
         if (k != VK_NONE) return k;
         /* a sequence is pending: give the rest of it 60 ms to arrive */
-        struct pollfd pfd = { .fd = STDIN_FILENO, .events = POLLIN };
-        if (poll(&pfd, 1, 60) <= 0)
+        struct pollfd efd = { .fd = STDIN_FILENO, .events = POLLIN };
+        if (poll(&efd, 1, 60) <= 0)
             return keydec_timeout(kd);   /* a lone Escape is a real Escape */
     }
 }
@@ -59,9 +69,14 @@ int ui_run(struct ui *ui) {
     raw.c_cc[VTIME] = 0;
     tcsetattr(STDIN_FILENO, TCSAFLUSH, &raw);
     atexit(term_restore);
-    signal(SIGINT, on_quit);
-    signal(SIGTERM, on_quit);
-    signal(SIGWINCH, on_winch);
+    /* no SA_RESTART: a signal interrupts read/poll with EINTR so the loop
+       notices flags immediately (live resize, prompt quit) */
+    struct sigaction sa = { .sa_handler = on_quit };
+    sigemptyset(&sa.sa_mask);
+    sigaction(SIGINT, &sa, NULL);
+    sigaction(SIGTERM, &sa, NULL);
+    sa.sa_handler = on_winch;
+    sigaction(SIGWINCH, &sa, NULL);
     {
         const char seq[] = "\033[?1049h\033[?25l";   /* alt screen, hide cursor */
         ssize_t w = write(STDOUT_FILENO, seq, sizeof seq - 1);
@@ -86,5 +101,9 @@ int ui_run(struct ui *ui) {
         ui_event(ui, &ev);
     }
     term_restore();
+    if (got_quit) {
+        signal(got_quit, SIG_DFL);
+        raise(got_quit);
+    }
     return 0;
 }
