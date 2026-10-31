@@ -89,11 +89,13 @@ dangling sequences), and live resize - plus a golden dump of a scripted
 form session: type "Adi", uncheck notifications, move the list, press
 save, verify the status line. CI also runs the suite under ASan/UBSan.
 
+The interactive runner restores the terminal on Ctrl-C/SIGTERM and
+re-lays out live on SIGWINCH; tests/signal_test.c drives both over a
+real pty in CI.
+
 Not tested: interactive use on a real terminal by a human (event decode
 and rendering are verified headless and as text, not by eye on every
-terminal emulator) and mouse input. The interactive runner restores the
-terminal on Ctrl-C/SIGTERM and re-lays out on SIGWINCH; both are wired
-through signal handlers but exercised manually, not in CI.
+terminal emulator) and mouse input.
 
 ## Architecture and tests
 
