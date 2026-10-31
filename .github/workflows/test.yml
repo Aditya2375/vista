@@ -19,3 +19,8 @@ jobs:
           cc -std=gnu11 -O1 -g -Wall -Wextra -Werror -Isrc -fsanitize=address,undefined \
             tests/test_round2.c src/surface.c src/widget.c src/keys.c src/run.c -o build/tests/test_round2_san
           ./build/tests/test_round2_san
+      - name: scripted demo session under ASan and UBSan
+        run: |
+          cc -std=gnu11 -O1 -g -Wall -Wextra -Werror -Isrc -Iexamples -DDEMO_NO_MAIN -fsanitize=address,undefined \
+            tests/dump_demo.c examples/demo.c src/surface.c src/widget.c src/keys.c src/run.c -o build/tests/dump_demo_san
+          ASAN_OPTIONS=detect_leaks=1 ./build/tests/dump_demo_san > /dev/null

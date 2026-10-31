@@ -9,10 +9,10 @@ mkdir -p "$OUT"
 TCC="${CC:-cc}"
 TCFLAGS="-std=gnu11 -O2 -g -Wall -Wextra -Werror -Isrc"
 
-$TCC $TCFLAGS tests/test_vista.c build/libvista.a -o "$OUT/test_vista"
+$TCC $TCFLAGS $EXTRA tests/test_vista.c build/libvista.a -o "$OUT/test_vista"
 "$OUT/test_vista"
 
-$TCC $TCFLAGS tests/test_round2.c build/libvista.a -o "$OUT/test_round2"
+$TCC $TCFLAGS $EXTRA tests/test_round2.c build/libvista.a -o "$OUT/test_round2"
 "$OUT/test_round2"
 
 $TCC $TCFLAGS -Iexamples -DDEMO_NO_MAIN \
